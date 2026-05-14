@@ -1,0 +1,281 @@
+# AGOA Portfolio Manager — Full Project Build Prompt
+
+## 🧠 Project Overview
+
+Build a complete Python project called `agoa_portfolio_manager` that implements an **Adaptive Genetic Optimization Algorithm (AGOA)** to dynamically allocate capital across 10 day-trading strategies. The system simulates a 6-month period on historical market data, recomputes allocations **twice a week** (Wednesday morning and Friday after market close), and benchmarks results against an equal-weight 1/N portfolio.
+
+---
+
+## 📁 Required File & Folder Structure
+
+```
+agoa_portfolio_manager/
+│
+├── main.py                        # Entry point: runs simulation or live mode
+├── config.py                      # All global config: tickers, dates, capital, AGOA params
+├── requirements.txt
+├── README.md
+│
+├── core/
+│   ├── agoa_engine.py             # AGOA optimizer: ranking, tiering, allocation logic
+│   ├── portfolio_manager.py       # Tracks capital, positions, reallocation across strategies
+│   ├── performance_tracker.py     # Tracks each strategy's metrics per evaluation window
+│   ├── simulation_runner.py       # Runs 6-month simulation, calls reallocation on schedule
+│   ├── benchmark.py               # Equal-weight 1/N portfolio simulation
+│   └── report_generator.py        # Generates charts, equity curves, allocation heatmaps
+│
+├── data/
+│   ├── data_loader.py             # Downloads OHLCV data from yfinance
+│   ├── cache/                     # Local cache for downloaded price data (CSV)
+│   └── universe.py                # Defines which tickers each strategy type trades
+│
+├── strategies/
+│   ├── base_strategy.py           # Abstract base class all strategies must implement
+│   ├── atr_strategy/
+│   │   ├── __init__.py
+│   │   └── strategy.py
+│   ├── rsi_strategy/
+│   │   ├── __init__.py
+│   │   └── strategy.py
+│   ├── breakout_strategy/
+│   │   ├── __init__.py
+│   │   └── strategy.py
+│   ├── dynamic_stop_loss_strategy/
+│   │   ├── __init__.py
+│   │   └── strategy.py
+│   ├── macd_crossover_strategy/
+│   │   ├── __init__.py
+│   │   └── strategy.py
+│   ├── bollinger_bands_strategy/
+│   │   ├── __init__.py
+│   │   └── strategy.py
+│   ├── vwap_strategy/
+│   │   ├── __init__.py
+│   │   └── strategy.py
+│   ├── mean_reversion_strategy/
+│   │   ├── __init__.py
+│   │   └── strategy.py
+│   ├── momentum_strategy/
+│   │   ├── __init__.py
+│   │   └── strategy.py
+│   └── gap_fade_strategy/
+│       ├── __init__.py
+│       └── strategy.py
+│
+├── live/
+│   ├── paper_trader.py            # Paper trading stub (ready for broker API wiring)
+│   └── broker_adapter.py          # Interface for future broker integration (Alpaca etc.)
+│
+└── outputs/
+    ├── reports/                   # HTML/PNG report outputs
+    └── logs/                      # Per-run logs with allocation decisions
+```
+
+---
+
+## ⚙️ AGOA Allocation Logic (`core/agoa_engine.py`)
+
+Implement the following tiered allocation model, evaluated every recomputation cycle:
+
+```
+TOP 10%    → receive 50% of total portfolio capital   (Elite tier)
+MIDDLE 70% → receive 40% of total portfolio capital   (Core tier)
+BOTTOM 10% → receive 10% of total portfolio capital   (Survival tier)
+```
+
+- With 10 strategies: Top 1 = Elite, Middle 7 = Core, Bottom 2 = Survival.
+- Within each tier, capital is distributed proportionally to composite scores.
+- If a strategy has a negative composite score, cap its allocation at the tier minimum.
+- The AGOA ranking window is the **last 3 weeks of trading data**.
+- Recomputation schedule: **Wednesday 09:31 ET** and **Friday 16:01 ET** (after close).
+- After each recomputation, log the allocation change and reason in `outputs/logs/`.
+
+---
+
+## 📊 Performance Scoring Metric (Composite Score)
+
+Each strategy is scored using:
+
+```
+composite_score = (0.5 × sharpe_ratio) + (0.3 × net_return_pct) − (0.2 × max_drawdown_pct)
+```
+
+- `sharpe_ratio`: annualized, computed on daily P&L over the 3-week window
+- `net_return_pct`: % return over the 3-week window
+- `max_drawdown_pct`: worst peak-to-trough drawdown over the 3-week window (positive number = worse)
+- All inputs should be normalized to [0, 1] range before weighting, to prevent scale dominance.
+
+**Also track but do not include in ranking by default (expose as config toggle):**
+- Win rate
+- Profit factor
+- Volatility
+- Average trade duration
+- Calmar ratio
+
+---
+
+## 📈 Strategy Specifications
+
+Each strategy lives in its own folder under `strategies/` and inherits from `base_strategy.py`.
+
+The base class must define:
+```python
+class BaseStrategy:
+    def __init__(self, name, tickers, capital): ...
+    def generate_signals(self, data: pd.DataFrame) -> pd.DataFrame: ...
+    def run_day(self, date, data) -> dict: ...  # returns: {trades, daily_pnl, positions}
+    def get_metrics(self) -> dict: ...
+    def reset(self): ...
+```
+
+### Strategy → Asset Mapping (each strategy trades its own universe):
+
+| Strategy | Asset Universe | Rationale |
+|---|---|---|
+| ATR Strategy | Mid-cap volatile stocks (e.g. NVDA, AMD, TSLA) | ATR excels in high-range assets |
+| RSI Strategy | Large-cap liquid stocks (e.g. AAPL, MSFT, AMZN) | RSI on deep liquidity |
+| Breakout Strategy | Small/mid-cap momentum names (e.g. SMCI, MSTR) | Breakouts on range expansion |
+| Dynamic Stop Loss | Indices/ETFs (e.g. SPY, QQQ, IWM) | Wide stops suit index trading |
+| MACD Crossover | Sector ETFs (e.g. XLF, XLE, XLK) | Trend-following on sectors |
+| Bollinger Bands | Stable large caps (e.g. JPM, BAC, GS) | Mean reversion in bounded ranges |
+| VWAP Strategy | High-volume intraday stocks (e.g. SPY, AAPL, TSLA) | VWAP is inherently intraday |
+| Mean Reversion | Correlated pairs (e.g. GLD/SLV, XOM/CVX) | Spread mean reversion |
+| Momentum Strategy | High-beta growth stocks (e.g. META, GOOGL, NFLX) | Momentum follows earnings/news cycles |
+| Gap Fade Strategy | Gapped stocks screened each morning | Fades pre-market gap moves |
+
+---
+
+## 🔁 Simulation Runner (`core/simulation_runner.py`)
+
+- Simulation period: **6 months** (configurable start/end date in `config.py`, default: 6 months before today)
+- Data granularity: **1-day OHLCV bars** from `yfinance` (use 1h bars if available for intraday strategies, fall back to daily if not)
+- Each strategy runs its `run_day()` method for each trading day in sequence
+- Capital is **not shared between strategies** — each gets its allocated slice; P&L is tracked separately per strategy then aggregated
+- Reallocation events fire on Wednesdays and Fridays; the 3-week window lookback must always reference actual trading days (not calendar days)
+- After all 6 months, call `report_generator.py` to produce the final output
+
+---
+
+## 📉 Benchmark (`core/benchmark.py`)
+
+Run a parallel simulation where all 10 strategies receive equal capital (1/N = 10% each), with **no reallocation** throughout the 6-month period. Compare:
+
+- Final portfolio value
+- Sharpe ratio (full period)
+- Max drawdown
+- Annualized return
+- Monthly return breakdown
+- Best and worst month
+
+Plot AGOA portfolio equity curve vs. 1/N benchmark equity curve on the same chart.
+
+---
+
+## 📊 Report Generator (`core/report_generator.py`)
+
+Using `plotly` (or `matplotlib` as fallback), generate:
+
+1. **Equity Curves**: AGOA portfolio vs. 1/N benchmark (full 6 months)
+2. **Allocation Heatmap**: Strategy allocations over time (x=recomputation dates, y=strategies, color=% allocation)
+3. **Per-Strategy Performance Table**: Final metrics for each strategy
+4. **Monthly P&L Breakdown**: Grouped bar chart by month (AGOA vs. benchmark)
+5. **Tier History**: How often each strategy was Elite / Core / Survival
+6. **Drawdown Chart**: Rolling max drawdown over time for both portfolios
+7. Save all as HTML to `outputs/reports/` and print summary to console
+
+---
+
+## 🧩 Dynamic Parameters to Implement (via `config.py` flags)
+
+Implement the following as toggleable parameters:
+
+```python
+# AGOA Tier Configuration
+ELITE_THRESHOLD = 0.10        # Top X% → Elite
+SURVIVAL_THRESHOLD = 0.10     # Bottom X% → Survival
+ELITE_ALLOCATION = 0.50
+CORE_ALLOCATION = 0.40
+SURVIVAL_ALLOCATION = 0.10
+
+# Scoring Weights
+SHARPE_WEIGHT = 0.50
+RETURN_WEIGHT = 0.30
+DRAWDOWN_WEIGHT = 0.20
+
+# Lookback window
+LOOKBACK_WEEKS = 3
+
+# Recomputation schedule
+RECOMPUTE_DAYS = ["Wednesday", "Friday"]
+
+# Risk controls
+MAX_SINGLE_STRATEGY_ALLOCATION = 0.60   # Hard cap
+MIN_SINGLE_STRATEGY_ALLOCATION = 0.02   # Floor for Survival tier
+
+# Dynamic indicator-based overrides (NEW - implement these)
+ENABLE_VOLATILITY_REGIME_FILTER = True   # If VIX > threshold, reduce Elite allocation, raise Survival
+VIX_HIGH_THRESHOLD = 25
+ENABLE_MOMENTUM_BOOST = True             # Boost Elite allocation if 5d momentum is still positive
+ENABLE_CORRELATION_PENALTY = True        # Penalize strategies with >0.85 correlation to each other
+ENABLE_SECTOR_CONCENTRATION_CAP = True   # Max 35% of capital in same sector strategies
+ENABLE_DRAWDOWN_CIRCUIT_BREAKER = True   # If any strategy drawdown > 20%, force to Survival tier
+ENABLE_ADAPTIVE_LOOKBACK = True          # Extend lookback to 5 weeks in high-volatility regimes
+```
+
+### Suggested Additional Dynamic Indicators to Integrate:
+
+1. **VIX Regime Filter**: When market VIX > 25, automatically increase Survival tier floor to 5%, reduce Elite ceiling to 40%. Protects against fragile strategies in chaotic markets.
+2. **Momentum Confirmation**: Before assigning Elite status, check if the strategy's 5-day rolling return is still positive (trend confirmation).
+3. **Inter-Strategy Correlation Penalty**: If two strategies have >0.85 return correlation over the lookback period, penalize the lower-scoring one's composite score by 15% to encourage diversification.
+4. **Sector Concentration Cap**: Strategies trading the same sector ETFs cannot collectively exceed 35% of total capital.
+5. **Drawdown Circuit Breaker**: Any strategy with rolling drawdown > 20% in the current window is automatically demoted to Survival tier regardless of score.
+6. **Adaptive Lookback**: In high-volatility environments (realized vol > 1.5× 90-day avg), extend lookback window from 3 to 5 weeks to smooth signal noise.
+7. **Win Rate Floor**: If a strategy's win rate drops below 35% in the last 10 trades, apply a composite score penalty of 20%.
+8. **Trade Frequency Normalizer**: Normalize scores by number of trades to prevent strategies with very few trades from receiving artificially high Sharpe ratios.
+
+---
+
+## 📦 Dependencies (`requirements.txt`)
+
+```
+yfinance>=0.2.40
+pandas>=2.0
+numpy>=1.26
+plotly>=5.20
+scipy>=1.12
+scikit-learn>=1.4
+ta>=0.11.0          # Technical analysis indicators
+schedule>=1.2       # For live recomputation scheduling
+loguru>=0.7         # Structured logging
+rich>=13.0          # Console output formatting
+pytest>=8.0         # For unit tests
+```
+
+---
+
+## 🧪 Testing
+
+Create a `tests/` folder with at minimum:
+- `test_agoa_engine.py`: test tier assignment, allocation math, edge cases (e.g. all strategies equal score)
+- `test_performance_tracker.py`: test composite score calculation with known inputs
+- `test_simulation_runner.py`: smoke test with 2-week mini-simulation using mock data
+
+---
+
+## ✅ Build Order (recommended)
+
+1. `config.py` and `requirements.txt`
+2. `data/data_loader.py` and `data/universe.py`
+3. `strategies/base_strategy.py`
+4. All 10 strategy implementations (minimal viable version first)
+5. `core/performance_tracker.py`
+6. `core/agoa_engine.py`
+7. `core/portfolio_manager.py`
+8. `core/benchmark.py`
+9. `core/simulation_runner.py`
+10. `core/report_generator.py`
+11. `main.py`
+12. Tests
+13. `live/` stubs
+
+Start with step 1. Ask me before proceeding to each next step.
