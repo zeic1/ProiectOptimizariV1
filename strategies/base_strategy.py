@@ -8,9 +8,10 @@ class BaseStrategy:
         self.initial_capital = capital
         
         # State machine attributes
-        self.positions: Dict[str, Dict] = {} # Stores active positions per ticker
+        self.positions: Dict[str, Dict] = {}
         self.daily_pnl: List[float] = []
         self.trades: List[Dict] = []
+        self._signals_cache: pd.DataFrame = None  # pre-computed once before simulation
 
     def generate_signals(self, data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
         raise NotImplementedError("Must implement generate_signals")
@@ -24,10 +25,13 @@ class BaseStrategy:
         """
         day_pnl = 0.0
         day_trades = []
-        
-        # 1. Generate signals for all historical data up to the current date.
-        # The child strategy is responsible for the logic (e.g., using rolling windows).
-        all_signals = self.generate_signals(data)
+
+        # Use pre-computed signal cache; fall back to on-the-fly if not available.
+        if self._signals_cache is not None:
+            all_signals = self._signals_cache
+        else:
+            filtered = {t: df for t, df in data.items() if t in self.tickers}
+            all_signals = self.generate_signals(filtered)
 
         # 2. First, calculate unrealized P&L for any existing open positions.
         positions_to_close_today = []
@@ -102,3 +106,4 @@ class BaseStrategy:
         self.daily_pnl = []
         self.trades = []
         self.positions = {}
+        self._signals_cache = None

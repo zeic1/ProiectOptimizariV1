@@ -23,8 +23,25 @@ class SimulationRunner:
         self.agoa_engine = agoa_engine
         self.data = data
 
+    @staticmethod
+    def _is_recompute_day(date: pd.Timestamp, dates_set: set) -> bool:
+        if config.RECOMPUTE_FREQUENCY == "monthly":
+            if config.RECOMPUTE_MONTHLY_TIMING == "last":
+                # True if no trading date exists in the same month after this one
+                return not any(
+                    d.year == date.year and d.month == date.month and d > date
+                    for d in dates_set
+                )
+            else:  # "first"
+                return not any(
+                    d.year == date.year and d.month == date.month and d < date
+                    for d in dates_set
+                )
+        else:  # "weekly"
+            return date.strftime("%A") in config.RECOMPUTE_DAYS
+
     def run(self, on_progress=None):
-        # Gather and sort all unique trading dates across all assets in the specified window
+        # Gather and sort all unique trading dates in the simulation window
         all_dates = set()
         for ticker, df in self.data.items():
             mask = (df.index.date >= config.SIMULATION_START_DATE) & (df.index.date <= config.SIMULATION_END_DATE)
@@ -36,6 +53,17 @@ class SimulationRunner:
             logger.error("No dates found in data for the given simulation window.")
             return
 
+        # Pre-compute signals for every strategy once — avoids O(N²) recomputation
+        logger.info("Pre-computing strategy signals...")
+        all_strategies = {
+            **self.portfolio_manager.strategies,
+            **self.benchmark.strategies,
+        }
+        for name, strat in all_strategies.items():
+            filtered = {t: df for t, df in self.data.items() if t in strat.tickers}
+            strat._signals_cache = strat.generate_signals(filtered)
+        logger.info(f"Signal pre-computation complete for {len(all_strategies)} strategies.")
+
         logger.info(f"Starting simulation from {dates_to_run[0].date()} to {dates_to_run[-1].date()}")
         total = len(dates_to_run)
 
@@ -43,8 +71,7 @@ class SimulationRunner:
             self.benchmark.run_day(date, self.data)
             self.portfolio_manager.run_day(date, self.data)
 
-            day_name = date.strftime("%A")
-            if day_name in config.RECOMPUTE_DAYS:
+            if self._is_recompute_day(date, all_dates):
                 self._recompute_and_reallocate(date)
 
             if on_progress and i % 5 == 0:

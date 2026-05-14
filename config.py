@@ -3,10 +3,10 @@ import datetime
 # ==========================================
 # General Simulation Configuration
 # ==========================================
-INITIAL_CAPITAL = 100000.0
+INITIAL_CAPITAL = 500_000.0
 SIMULATION_END_DATE = datetime.date.today()
-SIMULATION_START_DATE = SIMULATION_END_DATE - datetime.timedelta(days=180) # 6 months lookback
-DATA_TIMEFRAME = "1d" 
+SIMULATION_START_DATE = SIMULATION_END_DATE - datetime.timedelta(days=365)  # 1 year
+DATA_TIMEFRAME = "1d"
 
 # ==========================================
 # AGOA Tier Configuration
@@ -28,8 +28,10 @@ DRAWDOWN_WEIGHT = 0.20
 # ==========================================
 # Timing and Scheduling
 # ==========================================
-LOOKBACK_WEEKS = 3
-RECOMPUTE_DAYS = ["Wednesday", "Friday"]
+LOOKBACK_WEEKS = 12                   # 3-month lookback suits monthly recomputation
+RECOMPUTE_FREQUENCY = "monthly"       # "monthly" or "weekly"
+RECOMPUTE_MONTHLY_TIMING = "last"     # "first" or "last" trading day of the month
+RECOMPUTE_DAYS = ["Wednesday", "Friday"]  # used only when RECOMPUTE_FREQUENCY == "weekly"
 
 # ==========================================
 # Risk Controls

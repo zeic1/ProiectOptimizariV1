@@ -54,6 +54,12 @@ def run_full_simulation(start_date: datetime.date, end_date: datetime.date, prog
     Returns the portfolio_manager and benchmark objects for analysis.
     progress_callback(pct: int, label: str) is called at key stages if provided.
     """
+    # Set up file logging here so it works whether called from CLI or Dash background process
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs", "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f"simulation_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    log_sink_id = logger.add(log_file, rotation="10 MB", level="INFO")
+
     def _progress(pct, label):
         if progress_callback:
             progress_callback(pct, label)
@@ -97,6 +103,7 @@ def run_full_simulation(start_date: datetime.date, end_date: datetime.date, prog
     config.SIMULATION_START_DATE, config.SIMULATION_END_DATE = original_start, original_end
 
     _progress(90, "Simulation complete. Building charts...")
+    logger.remove(log_sink_id)
     return portfolio_manager, benchmark
 
 def main():
